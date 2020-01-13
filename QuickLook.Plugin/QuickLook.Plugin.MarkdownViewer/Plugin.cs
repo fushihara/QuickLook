@@ -38,7 +38,8 @@ namespace QuickLook.Plugin.MarkdownViewer
 
         public bool CanHandle(string path)
         {
-            return !Directory.Exists(path) && new[] {".md", ".rmd", ".markdown"}.Any(path.ToLower().EndsWith);
+            var validPath = this.GetValidPath(path);
+            return validPath != null;
         }
 
         public void Prepare(string path, ContextObject context)
@@ -48,6 +49,7 @@ namespace QuickLook.Plugin.MarkdownViewer
 
         public void View(string path, ContextObject context)
         {
+            path = this.GetValidPath(path);
             _panel = new WebpagePanel();
             context.ViewerContent = _panel;
             context.Title = Path.GetFileName(path);
@@ -72,6 +74,22 @@ namespace QuickLook.Plugin.MarkdownViewer
             var html = Resources.md2html.Replace("{{content}}", md);
 
             return html;
+        }
+        private string GetValidPath(string path) {
+            if (Directory.Exists(path)) {
+                var fileNames = new[] { "readme.md" };
+                foreach (var f in fileNames) {
+                    var mdPath = Path.Combine(path, f);
+                    if (File.Exists(mdPath)) {
+                        return mdPath;
+                    }
+                }
+            } else {
+                if (new[] { ".md", ".rmd", ".markdown" }.Any(path.ToLower().EndsWith)) {
+                    return path;
+                }
+            }
+            return null;
         }
     }
 }
