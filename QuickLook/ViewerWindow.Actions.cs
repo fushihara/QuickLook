@@ -16,12 +16,11 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Runtime.ExceptionServices;
 using System.Windows;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Threading;
 using QuickLook.Common.Helpers;
@@ -50,59 +49,94 @@ namespace QuickLook
             }
         }
 
-        internal void RunAndHide()
-        {
-            Run();
-            BeginHide();
-        }
-
         internal void RunAndClose()
         {
             Run();
-            BeginClose();
+            Close();
         }
 
-        private void ResizeAndCenter(Size size, bool canOldPluginResize, bool canNextPluginResize)
+        private void PositionWindow(Size size)
         {
-            // resize to MinSize first
-            size.Width = Math.Max(size.Width, MinWidth);
-            size.Height = Math.Max(size.Height, MinHeight);
-
             // if the window is now now maximized, do not move it
             if (WindowState == WindowState.Maximized)
                 return;
 
-            var screen = WindowHelper.GetCurrentWindowRect();
+            size = new Size(Math.Max(MinWidth, size.Width), Math.Max(MinHeight, size.Height));
 
-            // otherwise, resize it and place it to the old window center.
-            var oldCenterX = Left + Width / 2;
-            var oldCenterY = Top + Height / 2;
+            var newRect = IsLoaded ? ResizeAndCentreExistingWindow(size) : ResizeAndCentreNewWindow(size);
 
-            var newLeft = oldCenterX - size.Width / 2;
-            var newTop = oldCenterY - size.Height / 2;
+            this.MoveWindow(newRect.Left, newRect.Top, newRect.Width, newRect.Height);
+        }
 
-            // ensure the new window is fully visible
-            newLeft = Math.Max(newLeft, screen.Left); // left
-            newTop = Math.Max(newTop, screen.Top); // top
-            newLeft = newLeft + size.Width > screen.Right ? screen.Right - size.Width : newLeft; // right
-            newTop = newTop + size.Height > screen.Bottom ? screen.Bottom - size.Height : newTop; // bottom
+        private Rect ResizeAndCentreExistingWindow(Size size)
+        {
+            // align window just like in macOS ...
+            // 
+            // |10%|    80%    |10%|
+            // |---|-----------|---|---
+            // |TL |     T     |TR |10%
+            // |---|-----------|---|---
+            // |   |           |   |
+            // |L  |     C     | R |80%
+            // |   |           |   |
+            // |---|-----------|---|---
+            // |LB |     B     |RB |10%
+            // |---|-----------|---|---
 
-            if (IsLoaded)
-            {
-                this.MoveWindow(newLeft, newTop, size.Width, size.Height);
-            }
-            else
-            {
-                // MoveWindow does not work for new windows
-                Width = size.Width;
-                Height = size.Height;
-                Left = newLeft;
-                Top = newTop;
-                if (double.IsNaN(Left) || double.IsNaN(Top)) // first time showing
-                    WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            var scale = DpiHelper.GetScaleFactorFromWindow(this);
 
-                Dispatcher.BeginInvoke(new Action(() => this.BringToFront(Topmost)), DispatcherPriority.Render);
-            }
+            var limitPercentX = 0.1 * scale.Horizontal;
+            var limitPercentY = 0.1 * scale.Vertical;
+
+            // use absolute pixels for calculation
+            var pxSize = new Size(scale.Horizontal * size.Width, scale.Vertical * size.Height);
+            var pxOldRect = this.GetWindowRectInPixel();
+
+            // scale to new size, maintain centre
+            var pxNewRect = Rect.Inflate(pxOldRect,
+                (pxSize.Width - pxOldRect.Width) / 2,
+                (pxSize.Height - pxOldRect.Height) / 2);
+
+            var desktopRect = WindowHelper.GetDesktopRectFromWindowInPixel(this);
+
+            var leftLimit = desktopRect.Left + desktopRect.Width * limitPercentX;
+            var rightLimit = desktopRect.Right - desktopRect.Width * limitPercentX;
+            var topLimit = desktopRect.Top + desktopRect.Height * limitPercentY;
+            var bottomLimit = desktopRect.Bottom - desktopRect.Height * limitPercentY;
+
+            if (pxOldRect.Left < leftLimit && pxOldRect.Right < rightLimit) // L
+                pxNewRect.Location = new Point(Math.Max(pxOldRect.Left, desktopRect.Left), pxNewRect.Top);
+            else if (pxOldRect.Left > leftLimit && pxOldRect.Right > rightLimit) // R
+                pxNewRect.Location = new Point(Math.Min(pxOldRect.Right, desktopRect.Right) - pxNewRect.Width, pxNewRect.Top);
+            else // C, fix window boundary
+                pxNewRect.Offset(
+                    Math.Max(0, desktopRect.Left - pxNewRect.Left) + Math.Min(0, desktopRect.Right - pxNewRect.Right), 0);
+
+            if (pxOldRect.Top < topLimit && pxOldRect.Bottom < bottomLimit) // T
+                pxNewRect.Location = new Point(pxNewRect.Left, Math.Max(pxOldRect.Top, desktopRect.Top));
+            else if (pxOldRect.Top > topLimit && pxOldRect.Bottom > bottomLimit) // B
+                pxNewRect.Location = new Point(pxNewRect.Left,
+                    Math.Min(pxOldRect.Bottom, desktopRect.Bottom) - pxNewRect.Height);
+            else // C, fix window boundary
+                pxNewRect.Offset(0,
+                    Math.Max(0, desktopRect.Top - pxNewRect.Top) + Math.Min(0, desktopRect.Bottom - pxNewRect.Bottom));
+
+            // return absolute location and relative size
+            return new Rect(pxNewRect.Location, size);
+        }
+
+        private Rect ResizeAndCentreNewWindow(Size size)
+        {
+            var desktopRect = WindowHelper.GetCurrentDesktopRectInPixel();
+            var scale = DpiHelper.GetCurrentScaleFactor();
+            var pxSize = new Size(scale.Horizontal * size.Width, scale.Vertical * size.Height);
+
+            var pxLocation = new Point(
+                desktopRect.X + (desktopRect.Width - pxSize.Width) / 2,
+                desktopRect.Y + (desktopRect.Height - pxSize.Height) / 2);
+
+            // return absolute location and relative size
+            return new Rect(pxLocation, size);
         }
 
         internal void UnloadPlugin()
@@ -164,10 +198,13 @@ namespace QuickLook
             else
                 _ignoreNextWindowSizeChange = true;
 
-            ResizeAndCenter(newSize, _canOldPluginResize, ContextObject.CanResize);
+            PositionWindow(newSize);
 
             if (Visibility != Visibility.Visible)
+            {
+                Dispatcher.BeginInvoke(new Action(() => this.BringToFront(Topmost)), DispatcherPriority.Render);
                 Show();
+            }
 
             //ShowWindowCaptionContainer(null, null);
             //WindowHelper.SetActivate(new WindowInteropHelper(this), ContextObject.CanFocus);
@@ -193,18 +230,16 @@ namespace QuickLook
             buttonShare.Visibility = ShareHelper.IsShareSupported(_path) ? Visibility.Visible : Visibility.Collapsed;
 
             // open icon
-            buttonOpenText.Inlines.Clear();
-
             if (Directory.Exists(_path))
             {
-                AddToInlines("MW_BrowseFolder", Path.GetFileName(_path));
+                buttonOpen.ToolTip = string.Format(TranslationHelper.Get("MW_BrowseFolder"), Path.GetFileName(_path));
                 return;
             }
 
             var isExe = FileHelper.IsExecutable(_path, out var appFriendlyName);
             if (isExe)
             {
-                AddToInlines("MW_Run", appFriendlyName);
+                buttonOpen.ToolTip = string.Format(TranslationHelper.Get("MW_Run"), appFriendlyName);
                 return;
             }
 
@@ -212,60 +247,20 @@ namespace QuickLook
             var found = FileHelper.GetAssocApplication(_path, out appFriendlyName);
             if (found)
             {
-                AddToInlines("MW_OpenWith", appFriendlyName);
+                buttonOpen.ToolTip = string.Format(TranslationHelper.Get("MW_OpenWith"), appFriendlyName);
                 return;
             }
 
             // assoc not found
-            AddToInlines("MW_Open", Path.GetFileName(_path));
-
-            void AddToInlines(string str, string replaceWith)
-            {
-                // limit str length
-                if (replaceWith.Length > 16)
-                    replaceWith = replaceWith.Substring(0, 8) + "…" + replaceWith.Substring(replaceWith.Length - 8);
-
-                str = TranslationHelper.Get(str);
-                var elements = str.Split(new[] {"{0}"}, StringSplitOptions.None).ToList();
-                while (elements.Count < 2)
-                    elements.Add(string.Empty);
-
-                buttonOpenText.Inlines.Add(
-                    new Run(elements[0]) {FontWeight = FontWeights.Normal}); // text beforehand
-                buttonOpenText.Inlines.Add(
-                    new Run(replaceWith) {FontWeight = FontWeights.SemiBold}); // appFriendlyName
-                buttonOpenText.Inlines.Add(
-                    new Run(elements[1]) {FontWeight = FontWeights.Normal}); // text afterward
-            }
+            buttonOpen.ToolTip = string.Format(TranslationHelper.Get("MW_Open"), Path.GetFileName(_path));
         }
 
-        internal void BeginHide()
-        {
-            // reset custom window size
-            _customWindowSize = Size.Empty;
-            _ignoreNextWindowSizeChange = true;
-
-            UnloadPlugin();
-
-            // if the this window is hidden in Max state, new show() will results in failure:
-            // "Cannot show Window when ShowActivated is false and WindowState is set to Maximized"
-            //WindowState = WindowState.Normal;
-
-            Hide();
-            //Dispatcher.BeginInvoke(new Action(Hide), DispatcherPriority.ApplicationIdle);
-
-            ViewWindowManager.GetInstance().ForgetCurrentWindow();
-            BeginClose();
-
-            ProcessHelper.PerformAggressiveGC();
-        }
-
-        internal void BeginClose()
+        protected override void OnClosing(CancelEventArgs e)
         {
             UnloadPlugin();
             busyDecorator.Dispose();
 
-            Close();
+            base.OnClosing(e);
 
             ProcessHelper.PerformAggressiveGC();
         }

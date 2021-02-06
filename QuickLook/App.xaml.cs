@@ -16,8 +16,6 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
-using System.Configuration;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -34,6 +32,7 @@ namespace QuickLook
     /// </summary>
     public partial class App : Application
     {
+        public static readonly string LocalDataPath = SettingHelper.LocalDataPath;
         public static readonly string UserPluginPath = Path.Combine(SettingHelper.LocalDataPath, "QuickLook.Plugin\\");
         public static readonly string AppFullPath = Assembly.GetExecutingAssembly().Location;
         public static readonly string AppPath = Path.GetDirectoryName(AppFullPath);
@@ -41,8 +40,9 @@ namespace QuickLook
         public static readonly bool IsUWP = ProcessHelper.IsRunningAsUWP();
         public static readonly bool IsWin10 = Environment.OSVersion.Version >= new Version(10, 0);
         public static readonly bool IsGPUInBlacklist = SystemHelper.IsGPUInBlacklist();
+        public static readonly bool IsPortable = SettingHelper.IsPortableVersion();
 
-        private bool _isFirstInstance;
+        private bool _cleanExit = true;
         private Mutex _isRunning;
 
         protected override void OnStartup(StartupEventArgs e)
@@ -57,50 +57,58 @@ namespace QuickLook
 
         private void Application_Startup(object sender, StartupEventArgs e)
         {
-            if (ProcessHelper.IsOnWindows10S())
+            if (!EnsureOSVersion()
+                || !EnsureFirstInstance(e.Args)
+                || !EnsureFolderWritable(SettingHelper.LocalDataPath))
             {
-                MessageBox.Show("This application does not run on Windows 10 S.");
-
+                _cleanExit = false;
                 Shutdown();
                 return;
             }
 
-            EnsureFirstInstance();
-
-            if (!_isFirstInstance)
-            {
-                // second instance: preview this file
-                if (e.Args.Any() && (Directory.Exists(e.Args.First()) || File.Exists(e.Args.First())))
-                    RemoteCallShowPreview(e);
-                // second instance: duplicate
-                else
-                    MessageBox.Show(TranslationHelper.Get("APP_SECOND_TEXT"), TranslationHelper.Get("APP_SECOND"),
-                        MessageBoxButton.OK, MessageBoxImage.Information);
-
-                Shutdown();
-                return;
-            }
-            
             CheckUpdate();
             RunListener(e);
 
             // first instance: run and preview this file
             if (e.Args.Any() && (Directory.Exists(e.Args.First()) || File.Exists(e.Args.First())))
-                RemoteCallShowPreview(e);
+                PipeServerManager.SendMessage(PipeMessages.Toggle, e.Args.First());
+        }
+
+        private bool EnsureOSVersion()
+        {
+            if (!ProcessHelper.IsOnWindows10S())
+                return true;
+
+            MessageBox.Show("This application does not run on Windows 10 S.");
+
+            return false;
+        }
+
+        private bool EnsureFolderWritable(string folder)
+        {
+            try
+            {
+                var path = FileHelper.CreateTempFile(folder);
+                File.Delete(path);
+            }
+            catch
+            {
+                MessageBox.Show(string.Format(TranslationHelper.Get("APP_PATH_NOT_WRITABLE"), folder), "QuickLook",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+
+                return false;
+            }
+
+            return true;
         }
 
         private void CheckUpdate()
         {
-            if (DateTime.Now.Ticks - SettingHelper.Get<long>("LastUpdateTicks") < TimeSpan.FromDays(7).Ticks)
+            if (DateTime.Now.Ticks - SettingHelper.Get<long>("LastUpdateTicks") < TimeSpan.FromDays(30).Ticks)
                 return;
 
             Task.Delay(120 * 1000).ContinueWith(_ => Updater.CheckForUpdates(true));
             SettingHelper.Set("LastUpdateTicks", DateTime.Now.Ticks);
-        }
-
-        private void RemoteCallShowPreview(StartupEventArgs e)
-        {
-            PipeServerManager.SendMessage(PipeMessages.Toggle, e.Args.First());
         }
 
         private void RunListener(StartupEventArgs e)
@@ -115,26 +123,41 @@ namespace QuickLook
 
             PluginManager.GetInstance();
             ViewWindowManager.GetInstance();
-            BackgroundListener.GetInstance();
+            KeystrokeDispatcher.GetInstance();
             PipeServerManager.GetInstance();
         }
 
         private void App_OnExit(object sender, ExitEventArgs e)
         {
-            if (!_isFirstInstance)
+            if (!_cleanExit)
                 return;
 
             _isRunning.ReleaseMutex();
 
             PipeServerManager.GetInstance().Dispose();
             TrayIconManager.GetInstance().Dispose();
-            BackgroundListener.GetInstance().Dispose();
+            KeystrokeDispatcher.GetInstance().Dispose();
             ViewWindowManager.GetInstance().Dispose();
         }
 
-        private void EnsureFirstInstance()
+        private bool EnsureFirstInstance(string[] args)
         {
-            _isRunning = new Mutex(true, "QuickLook.App.Mutex", out _isFirstInstance);
+            _isRunning = new Mutex(true, "QuickLook.App.Mutex", out bool isFirst);
+
+            if (isFirst)
+                return true;
+
+            // second instance: preview this file
+            if (args.Any() && (Directory.Exists(args.First()) || File.Exists(args.First())))
+            {
+                PipeServerManager.SendMessage(PipeMessages.Toggle, args.First());
+            }
+            // second instance: duplicate
+            else
+                MessageBox.Show(TranslationHelper.Get("APP_SECOND_TEXT"), TranslationHelper.Get("APP_SECOND"),
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+
+            return false;
         }
     }
 }

@@ -19,6 +19,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -26,6 +27,7 @@ using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Rendering;
+using ICSharpCode.AvalonEdit.Search;
 using QuickLook.Common.Helpers;
 using QuickLook.Common.Plugin;
 using UtfUnknown;
@@ -50,6 +52,12 @@ namespace QuickLook.Plugin.TextViewer
             Options.EnableEmailHyperlinks = false;
             Options.EnableHyperlinks = false;
 
+            ContextMenu = new ContextMenu();
+            ContextMenu.Items.Add(new MenuItem
+                {Header = TranslationHelper.Get("Editor_Copy"), Command = ApplicationCommands.Copy});
+            ContextMenu.Items.Add(new MenuItem
+                {Header = TranslationHelper.Get("Editor_SelectAll"), Command = ApplicationCommands.SelectAll});
+
             ManipulationInertiaStarting += Viewer_ManipulationInertiaStarting;
             ManipulationStarting += Viewer_ManipulationStarting;
             ManipulationDelta += Viewer_ManipulationDelta;
@@ -59,6 +67,8 @@ namespace QuickLook.Plugin.TextViewer
             FontFamily = new FontFamily(TranslationHelper.Get("Editor_FontFamily"));
 
             TextArea.TextView.ElementGenerators.Add(new TruncateLongLines());
+
+            SearchPanel.Install(this);
 
             LoadFileAsync(path);
         }
@@ -99,15 +109,15 @@ namespace QuickLook.Plugin.TextViewer
 
         private class TruncateLongLines : VisualLineElementGenerator
         {
-            const int maxLength = 10000;
-            const string ellipsis = "……………";
+            const int MAX_LENGTH = 10000;
+            const string ELLIPSIS = "……………";
 
             public override int GetFirstInterestedOffset(int startOffset)
             {
                 var line = CurrentContext.VisualLine.LastDocumentLine;
-                if (line.Length > maxLength)
+                if (line.Length > MAX_LENGTH)
                 {
-                    int ellipsisOffset = line.Offset + maxLength - ellipsis.Length;
+                    int ellipsisOffset = line.Offset + MAX_LENGTH - ELLIPSIS.Length;
                     if (startOffset <= ellipsisOffset)
                         return ellipsisOffset;
                 }
@@ -116,7 +126,7 @@ namespace QuickLook.Plugin.TextViewer
 
             public override VisualLineElement ConstructElement(int offset)
             {
-                return new FormattedTextElement(ellipsis, CurrentContext.VisualLine.LastDocumentLine.EndOffset - offset);
+                return new FormattedTextElement(ELLIPSIS, CurrentContext.VisualLine.LastDocumentLine.EndOffset - offset);
             }
         }
 
@@ -124,7 +134,7 @@ namespace QuickLook.Plugin.TextViewer
         {
             Task.Run(() =>
             {
-                const int maxLength = 50 * 1024 * 1024;
+                const int maxLength = 5 * 1024 * 1024;
                 var buffer = new MemoryStream();
                 bool tooLong;
 
@@ -146,7 +156,7 @@ namespace QuickLook.Plugin.TextViewer
                     return;
 
                 if (tooLong)
-                    _context.Title += " (0 ~ 50MB)";
+                    _context.Title += " (0 ~ 5MB)";
 
                 var bufferCopy = buffer.ToArray();
                 buffer.Dispose();
