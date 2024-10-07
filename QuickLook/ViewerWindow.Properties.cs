@@ -20,6 +20,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using QuickLook.Common.Annotations;
+using QuickLook.Common.Helpers;
 using QuickLook.Common.Plugin;
 using QuickLook.Helpers;
 
@@ -45,6 +46,8 @@ namespace QuickLook
         }
         public IViewer Plugin { get; private set; }
         public ContextObject ContextObject { get; private set; }
+        public Themes CurrentTheme {get; private set; }
+
         public event PropertyChangedEventHandler PropertyChanged;
 
         [NotifyPropertyChangedInvocator]
@@ -83,11 +86,13 @@ namespace QuickLook
 
             if (isDark)
             {
+                CurrentTheme = Themes.Dark;
                 if (!Resources.MergedDictionaries.Contains(_darkDict))
                     Resources.MergedDictionaries.Add(_darkDict);
             }
             else
             {
+                CurrentTheme = Themes.Light;
                 if (Resources.MergedDictionaries.Contains(_darkDict))
                     Resources.MergedDictionaries.Remove(_darkDict);
             }

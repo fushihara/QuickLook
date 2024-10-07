@@ -23,14 +23,15 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using ImageMagick;
-using ImageMagick.Formats.Dng;
+using ImageMagick.Formats;
 using QuickLook.Common.Helpers;
+using QuickLook.Common.Plugin;
 
 namespace QuickLook.Plugin.ImageViewer.AnimatedImage.Providers
 {
     internal class ImageMagickProvider : AnimationProvider
     {
-        public ImageMagickProvider(string path, MetaProvider meta) : base(path, meta)
+        public ImageMagickProvider(Uri path, MetaProvider meta, ContextObject contextObject) : base(path, meta, contextObject)
         {
             Animator = new Int32AnimationUsingKeyFrames();
             Animator.KeyFrames.Add(new DiscreteInt32KeyFrame(0,
@@ -80,6 +81,7 @@ namespace QuickLook.Plugin.ImageViewer.AnimatedImage.Providers
             {
                 var settings = new MagickReadSettings
                 {
+                    BackgroundColor = MagickColors.None,
                     Defines = new DngReadDefines
                     {
                         OutputColor = DngOutputColor.SRGB,
@@ -90,21 +92,36 @@ namespace QuickLook.Plugin.ImageViewer.AnimatedImage.Providers
 
                 try
                 {
-                    using (var mi = new MagickImage(Path, settings))
+                    using (MagickImageCollection layers = new MagickImageCollection(Path.LocalPath, settings))
                     {
-                        var profile = mi.GetColorProfile();
-                        if (mi.ColorSpace == ColorSpace.RGB || mi.ColorSpace == ColorSpace.sRGB ||
-                            mi.ColorSpace == ColorSpace.scRGB)
-                            if (profile?.Description != null && !profile.Description.Contains("sRGB"))
+                        IMagickImage<byte> mi;
+                        // Only flatten multi-layer gimp xcf files.
+                        if (Path.LocalPath.ToLower().EndsWith(".xcf") && layers.Count > 1)
+                        {
+                            // Flatten crops layers to canvas
+                            mi = layers.Flatten(MagickColor.FromRgba(0, 0, 0, 0));
+                        }
+                        else
+                        {
+                            mi = layers[0];
+                        }
+                        if (SettingHelper.Get("UseColorProfile", false, "QuickLook.Plugin.ImageViewer"))
+                        {
+                            if (mi.ColorSpace == ColorSpace.RGB || mi.ColorSpace == ColorSpace.sRGB || mi.ColorSpace == ColorSpace.scRGB)
+                            {
                                 mi.SetProfile(ColorProfile.SRGB);
+                                if (ContextObject.ColorProfileName != null)
+                                    mi.SetProfile(new ColorProfile(ContextObject.ColorProfileName)); // map to monitor color
+                            }
+                        }
 
                         mi.AutoOrient();
 
                         if (mi.Width != (int) fullSize.Width || mi.Height != (int) fullSize.Height)
                             mi.Resize((int) fullSize.Width, (int) fullSize.Height);
 
-                        mi.Density = new Density(DpiHelper.DefaultDpi * DpiHelper.GetCurrentScaleFactor().Horizontal,
-                            DpiHelper.DefaultDpi * DpiHelper.GetCurrentScaleFactor().Vertical);
+                        mi.Density = new Density(DisplayDeviceHelper.DefaultDpi * DisplayDeviceHelper.GetCurrentScaleFactor().Horizontal,
+                            DisplayDeviceHelper.DefaultDpi * DisplayDeviceHelper.GetCurrentScaleFactor().Vertical);
 
                         var img = mi.ToBitmapSourceWithDensity();
 

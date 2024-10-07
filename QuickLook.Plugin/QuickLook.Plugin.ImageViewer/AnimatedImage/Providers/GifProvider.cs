@@ -22,6 +22,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using QuickLook.Common.ExtensionMethods;
 using QuickLook.Common.Helpers;
+using QuickLook.Common.Plugin;
 using Size = System.Windows.Size;
 
 namespace QuickLook.Plugin.ImageViewer.AnimatedImage.Providers
@@ -33,18 +34,18 @@ namespace QuickLook.Plugin.ImageViewer.AnimatedImage.Providers
         private bool _isPlaying;
         private NativeProvider _nativeProvider;
 
-        public GifProvider(string path, MetaProvider meta) : base(path, meta)
+        public GifProvider(Uri path, MetaProvider meta, ContextObject contextObject) : base(path, meta, contextObject)
         {
-            if (!ImageAnimator.CanAnimate(Image.FromFile(path)))
+            if (!ImageAnimator.CanAnimate(Image.FromFile(path.LocalPath)))
             {
-                _nativeProvider = new NativeProvider(path, meta);
+                _nativeProvider = new NativeProvider(path, meta, contextObject);
                 return;
             }
 
-            _fileHandle = (Bitmap) Image.FromFile(path);
+            _fileHandle = (Bitmap) Image.FromFile(path.LocalPath);
 
-            _fileHandle.SetResolution(DpiHelper.DefaultDpi * DpiHelper.GetCurrentScaleFactor().Horizontal,
-                DpiHelper.DefaultDpi * DpiHelper.GetCurrentScaleFactor().Vertical);
+            _fileHandle.SetResolution(DisplayDeviceHelper.DefaultDpi * DisplayDeviceHelper.GetCurrentScaleFactor().Horizontal,
+                DisplayDeviceHelper.DefaultDpi * DisplayDeviceHelper.GetCurrentScaleFactor().Vertical);
 
             Animator = new Int32AnimationUsingKeyFrames {RepeatBehavior = RepeatBehavior.Forever};
             Animator.KeyFrames.Add(new DiscreteInt32KeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(0))));

@@ -96,16 +96,48 @@ namespace QuickLook
 
             buttonShare.Click += (sender, e) => ShareHelper.Share(_path, this);
             buttonOpenWith.Click += (sender, e) => ShareHelper.Share(_path, this, true);
+            
+            // Set UI translations
+            buttonTop.ToolTip = TranslationHelper.Get("MW_StayTop");
+            buttonPin.ToolTip = TranslationHelper.Get("MW_PreventClosing");
+            buttonOpenWith.ToolTip = TranslationHelper.Get("MW_OpenWithMenu");
+            buttonShare.ToolTip = TranslationHelper.Get("MW_Share");
         }
 
         public override void OnApplyTemplate()
         {
             base.OnApplyTemplate();
 
-            if (SystemParameters.IsGlassEnabled && App.IsWin10 && !App.IsGPUInBlacklist)
-                WindowHelper.EnableBlur(this);
+            WindowHelper.RemoveWindowControls(this);
+
+            if (SettingHelper.Get("UseTransparency", true)
+                && SystemParameters.IsGlassEnabled
+                && !App.IsGPUInBlacklist)
+            {
+                if (App.IsWin11)
+                {
+                    if (Environment.OSVersion.Version >= new Version(10, 0, 22523))
+                    {
+                        WindowHelper.EnableBackdropMicaBlur(this, CurrentTheme == Themes.Dark);
+                    }
+                    else
+                    {
+                        WindowHelper.EnableMicaBlur(this, CurrentTheme == Themes.Dark);
+                    }
+                }
+                else if (App.IsWin10)
+                {
+                    WindowHelper.EnableBlur(this);
+                }
+                else
+                {
+                    Background = (Brush)FindResource("MainWindowBackgroundNoTransparent");
+                }
+            }
             else
-                Background = (Brush) FindResource("MainWindowBackgroundNoTransparent");
+            {
+                Background = (Brush)FindResource("MainWindowBackgroundNoTransparent");
+            }
         }
 
         private void SaveWindowSizeOnSizeChanged(object sender, SizeChangedEventArgs e)

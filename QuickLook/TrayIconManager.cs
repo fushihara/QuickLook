@@ -67,14 +67,12 @@ namespace QuickLook
 
         public void Dispose()
         {
-            SettingHelper.Set("ShowTrayIcon", _icon.Visible);
-
             _icon.Visible = false;
         }
 
         private Icon GetTrayIconByDPI()
         {
-            var scale = DpiHelper.GetCurrentScaleFactor().Vertical;
+            var scale = DisplayDeviceHelper.GetCurrentScaleFactor().Vertical;
 
             if (!App.IsWin10)
                 return scale > 1 ? Resources.app : Resources.app_16;

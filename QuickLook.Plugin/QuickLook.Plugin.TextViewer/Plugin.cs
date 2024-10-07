@@ -16,14 +16,18 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using System.Xml;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Highlighting.Xshd;
+using QuickLook.Common.Helpers;
 using QuickLook.Common.Plugin;
 
 namespace QuickLook.Plugin.TextViewer
@@ -32,33 +36,18 @@ namespace QuickLook.Plugin.TextViewer
     {
         private TextViewerPanel _tvp;
 
+        private static HighlightingManager _hlmLight;
+        private static HighlightingManager _hlmDark;
+
         public int Priority => -5;
 
         public void Init()
         {
-            var hlm = HighlightingManager.Instance;
-
-            var assemblyPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-            if (string.IsNullOrEmpty(assemblyPath)) return;
-
-            var syntaxPath = Path.Combine(assemblyPath, "Syntax");
-            if (!Directory.Exists(syntaxPath)) return;
-
-            foreach (var file in Directory.EnumerateFiles(syntaxPath, "*.xshd"))
-            {
-                var ext = Path.GetFileNameWithoutExtension(file);
-                using (Stream s = File.OpenRead(Path.GetFullPath(file)))
-                using (var reader = new XmlTextReader(s))
-                {
-                    var xshd = HighlightingLoader.LoadXshd(reader);
-                    var highlightingDefinition = HighlightingLoader.Load(xshd, hlm);
-                    if (xshd.Extensions.Count > 0)
-                        hlm.RegisterHighlighting(ext, xshd.Extensions.ToArray(), highlightingDefinition);
-                }
-            }
-
             // pre-load
             var _ = new TextEditor();
+
+            _hlmLight = getHighlightingManager(Themes.Light, "Light");
+            _hlmDark = getHighlightingManager(Themes.Dark, "Dark");
         }
 
         public bool CanHandle(string path)
@@ -66,7 +55,7 @@ namespace QuickLook.Plugin.TextViewer
             if (Directory.Exists(path))
                 return false;
 
-            if (path.ToLower().EndsWith(".txt"))
+            if (new[] { ".txt", ".rtf" }.Any(path.ToLower().EndsWith))
                 return true;
 
             // if there is a matched highlighting scheme (by file extension), treat it as a plain text file
@@ -86,16 +75,30 @@ namespace QuickLook.Plugin.TextViewer
 
         public void Prepare(string path, ContextObject context)
         {
-            //context.Theme = Themes.Light;
-
             context.PreferredSize = new Size {Width = 800, Height = 600};
         }
 
         public void View(string path, ContextObject context)
         {
-            _tvp = new TextViewerPanel(path, context);
+            if (path.ToLower().EndsWith(".rtf"))
+            {
+                var rtfBox = new RichTextBox();
+                FileStream fs = File.OpenRead(path);
+                rtfBox.Selection.Load(fs, DataFormats.Rtf);
+                rtfBox.IsReadOnly = true;
+                rtfBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+                rtfBox.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
 
-            context.ViewerContent = _tvp;
+                context.ViewerContent = rtfBox;
+                context.IsBusy = false;
+            }
+            else
+            {
+                _tvp = new TextViewerPanel(path, context);
+                AssignHighlightingManager(_tvp, context);
+
+                context.ViewerContent = _tvp;
+            }
             context.Title = $"{Path.GetFileName(path)}";
         }
 
@@ -112,6 +115,53 @@ namespace QuickLook.Plugin.TextViewer
                     return false;
 
             return true;
+        }
+
+        private HighlightingManager getHighlightingManager(Themes theme, string dirName)
+        {
+            var hlm = new HighlightingManager();
+
+            var assemblyPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            if (string.IsNullOrEmpty(assemblyPath))
+                return hlm;
+
+            var syntaxPath = Path.Combine(assemblyPath, "Syntax", dirName);
+            if (!Directory.Exists(syntaxPath))
+                return hlm;
+
+            foreach (var file in Directory.EnumerateFiles(syntaxPath, "*.xshd").OrderBy(f => f))
+            {
+                Debug.WriteLine(file);
+                var ext = Path.GetFileNameWithoutExtension(file);
+                using (Stream s = File.OpenRead(Path.GetFullPath(file)))
+                using (var reader = new XmlTextReader(s))
+                {
+                    var xshd = HighlightingLoader.LoadXshd(reader);
+                    var highlightingDefinition = HighlightingLoader.Load(xshd, hlm);
+                    if (xshd.Extensions.Count > 0)
+                        hlm.RegisterHighlighting(ext, xshd.Extensions.ToArray(), highlightingDefinition);
+                }
+            }
+
+            return hlm;
+        }
+        private void AssignHighlightingManager(TextViewerPanel tvp, ContextObject context)
+        {
+            var darkThemeAllowed = SettingHelper.Get("AllowDarkTheme", false, "QuickLook.Plugin.TextViewer");
+            var isDark = darkThemeAllowed && OSThemeHelper.AppsUseDarkTheme();
+            tvp.HighlightingManager = isDark ? _hlmDark : _hlmLight;
+            if (isDark)
+            {
+                tvp.Background = Brushes.Transparent;
+                tvp.SetResourceReference(Control.ForegroundProperty, "WindowTextForeground");
+            }
+            else
+            {
+                // if os dark mode, but not AllowDarkTheme, make background light
+                tvp.Background = OSThemeHelper.AppsUseDarkTheme()
+                    ? new SolidColorBrush(Color.FromArgb(150, 255, 255, 255))
+                    : Brushes.Transparent;
+            }
         }
     }
 }

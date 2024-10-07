@@ -17,6 +17,7 @@
 
 using System;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Controls;
@@ -38,12 +39,12 @@ namespace QuickLook.Plugin.TextViewer
     {
         private readonly ContextObject _context;
         private bool _disposed;
+        private HighlightingManager highlightingManager = HighlightingManager.Instance;
 
         public TextViewerPanel(string path, ContextObject context)
         {
             _context = context;
 
-            Background = new SolidColorBrush(Color.FromArgb(0xAA, 255, 255, 255));
             FontSize = 14;
             ShowLineNumbers = true;
             WordWrap = true;
@@ -54,9 +55,16 @@ namespace QuickLook.Plugin.TextViewer
 
             ContextMenu = new ContextMenu();
             ContextMenu.Items.Add(new MenuItem
-                {Header = TranslationHelper.Get("Editor_Copy"), Command = ApplicationCommands.Copy});
+            {
+                Header = TranslationHelper.Get("Editor_Copy", domain: Assembly.GetExecutingAssembly().GetName().Name),
+                Command = ApplicationCommands.Copy
+            });
             ContextMenu.Items.Add(new MenuItem
-                {Header = TranslationHelper.Get("Editor_SelectAll"), Command = ApplicationCommands.SelectAll});
+            {
+                Header = TranslationHelper.Get("Editor_SelectAll",
+                    domain: Assembly.GetExecutingAssembly().GetName().Name),
+                Command = ApplicationCommands.SelectAll
+            });
 
             ManipulationInertiaStarting += Viewer_ManipulationInertiaStarting;
             ManipulationStarting += Viewer_ManipulationStarting;
@@ -64,13 +72,20 @@ namespace QuickLook.Plugin.TextViewer
 
             PreviewMouseWheel += Viewer_MouseWheel;
 
-            FontFamily = new FontFamily(TranslationHelper.Get("Editor_FontFamily"));
+            FontFamily = new FontFamily(TranslationHelper.Get("Editor_FontFamily",
+                domain: Assembly.GetExecutingAssembly().GetName().Name));
 
             TextArea.TextView.ElementGenerators.Add(new TruncateLongLines());
 
             SearchPanel.Install(this);
 
             LoadFileAsync(path);
+        }
+
+        public HighlightingManager HighlightingManager
+        {
+            get => highlightingManager;
+            set => highlightingManager = value;
         }
 
         public void Dispose()
@@ -110,7 +125,7 @@ namespace QuickLook.Plugin.TextViewer
         private class TruncateLongLines : VisualLineElementGenerator
         {
             const int MAX_LENGTH = 10000;
-            const string ELLIPSIS = "……………";
+            const string ELLIPSIS = "⁞⁞[TRUNCATED]⁞⁞";
 
             public override int GetFirstInterestedOffset(int startOffset)
             {
@@ -135,12 +150,13 @@ namespace QuickLook.Plugin.TextViewer
             Task.Run(() =>
             {
                 const int maxLength = 5 * 1024 * 1024;
+                const int maxHighlightingLength = (int)(0.5 * 1024 * 1024);
                 var buffer = new MemoryStream();
-                bool tooLong;
+                bool fileTooLong;
 
                 using (var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
-                    tooLong = s.Length > maxLength;
+                    fileTooLong = s.Length > maxLength;
                     while (s.Position < s.Length && buffer.Length < maxLength)
                     {
                         if (_disposed)
@@ -155,7 +171,7 @@ namespace QuickLook.Plugin.TextViewer
                 if (_disposed)
                     return;
 
-                if (tooLong)
+                if (fileTooLong)
                     _context.Title += " (0 ~ 5MB)";
 
                 var bufferCopy = buffer.ToArray();
@@ -173,7 +189,9 @@ namespace QuickLook.Plugin.TextViewer
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     Encoding = encoding;
-                    SyntaxHighlighting = HighlightingManager.Instance.GetDefinitionByExtension(Path.GetExtension(path));
+                    SyntaxHighlighting = bufferCopy.Length > maxHighlightingLength
+                        ? null
+                        : HighlightingManager?.GetDefinitionByExtension(Path.GetExtension(path));
                     Document = doc;
 
                     _context.IsBusy = false;

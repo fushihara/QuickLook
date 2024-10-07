@@ -19,6 +19,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Windows;
+using ImageMagick;
 using QuickLook.Common.Helpers;
 using QuickLook.Common.Plugin;
 using QuickLook.Plugin.ImageViewer.AnimatedImage.Providers;
@@ -27,13 +28,28 @@ namespace QuickLook.Plugin.ImageViewer
 {
     public class Plugin : IViewer
     {
-        private static readonly HashSet<string> Formats = new HashSet<string>(new[]
+        private static readonly HashSet<string> WellKnownImageExtensions = new HashSet<string>(new[]
         {
-            ".apng", ".ari", ".arw", ".avif", ".bay", ".bmp", ".cap", ".cr2", ".cr3", ".crw", ".dcr", ".dcs", ".dng",
-            ".drf", ".eip", ".emf", ".erf", ".exr", ".fff", ".gif", ".hdr", ".heic", ".heif", ".ico", ".icon", ".iiq",
-            ".jfif", ".jpeg", ".jpg", ".k25", ".kdc", ".mdc", ".mef", ".mos", ".mrw", ".nef", ".nrw", ".obm", ".orf",
-            ".pbm", ".pef", ".pgm", ".png", ".pnm", ".ppm", ".psd", ".ptx", ".pxn", ".r3d", ".raf", ".raw", ".rw2",
-            ".rwl", ".rwz", ".sr2", ".srf", ".srw", ".svg", ".tga", ".tif", ".tiff", ".wdp", ".webp", ".wmf", ".x3f"
+            ".apng", ".ari", ".arw", ".avif",
+            ".bay", ".bmp",
+            ".cap", ".cr2", ".cr3", ".crw",
+            ".dcr", ".dcs", ".dng", ".drf",
+            ".eip", ".emf", ".erf", ".exr",
+            ".fff",
+            ".gif",
+            ".hdr", ".heic", ".heif",
+            ".ico", ".icon", ".iiq",
+            ".jfif", ".jp2", ".jpeg", ".jpg", ".jxl",
+            ".k25", ".kdc",
+            ".mdc", ".mef", ".mos", ".mrw",
+            ".nef", ".nrw",
+            ".obm", ".orf",
+            ".pbm", ".pef", ".pgm", ".png", ".pnm", ".ppm", ".psd", ".ptx", ".pxn",
+            ".r3d", ".raf", ".raw", ".rw2", ".rwl", ".rwz",
+            ".sr2", ".srf", ".srw", ".svg",
+            ".tga", ".tif", ".tiff",
+            ".wdp", ".webp", ".wmf",
+            ".x3f", ".xcf"
         });
 
         private ImagePanel _ip;
@@ -43,23 +59,47 @@ namespace QuickLook.Plugin.ImageViewer
 
         public void Init()
         {
+            var useColorProfile = SettingHelper.Get("UseColorProfile", false, "QuickLook.Plugin.ImageViewer");
+
             AnimatedImage.AnimatedImage.Providers.Add(
-                new KeyValuePair<string[], Type>(new[] {".apng", ".png"},
+                new KeyValuePair<string[], Type>(
+                    useColorProfile ? new[] { ".apng" } : new[] { ".apng", ".png" },
                     typeof(APngProvider)));
             AnimatedImage.AnimatedImage.Providers.Add(
                 new KeyValuePair<string[], Type>(new[] {".gif"},
                     typeof(GifProvider)));
             AnimatedImage.AnimatedImage.Providers.Add(
-                new KeyValuePair<string[], Type>(new[] {".bmp", ".jpg", ".jpeg", ".tif", ".tiff"},
+                new KeyValuePair<string[], Type>(
+                    useColorProfile ? new string[0] : new[] { ".bmp", ".jpg", ".jpeg", ".jfif", ".tif", ".tiff" },
                     typeof(NativeProvider)));
             AnimatedImage.AnimatedImage.Providers.Add(
                 new KeyValuePair<string[], Type>(new[] {"*"},
                     typeof(ImageMagickProvider)));
         }
 
+        private bool IsWellKnownImageExtension(string path)
+        {
+            return WellKnownImageExtensions.Contains(Path.GetExtension(path.ToLower()));
+        }
+
+        private bool IsImageMagickSupported(string path)
+        {
+            try
+            {
+                return new MagickImageInfo(path).Format != MagickFormat.Unknown;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public bool CanHandle(string path)
         {
-            return !Directory.Exists(path) && Formats.Contains(Path.GetExtension(path.ToLower()));
+            // Disabled due mishandling text file types e.g., "*.config".
+            // Only check extension for well known image and animated image types.
+            // For other image formats, let ImageMagick try to detect by file content.
+            return !Directory.Exists(path) && (IsWellKnownImageExtension(path)); // || IsImageMagickSupported(path));
         }
 
         public void Prepare(string path, ContextObject context)
@@ -73,7 +113,7 @@ namespace QuickLook.Plugin.ImageViewer
             else
                 context.PreferredSize = new Size(800, 600);
 
-            context.Theme = (Themes) SettingHelper.Get("LastTheme", 1);
+            context.Theme = (Themes) SettingHelper.Get("LastTheme", 1, "QuickLook.Plugin.ImageViewer");
         }
 
         public void View(string path, ContextObject context)
@@ -86,7 +126,7 @@ namespace QuickLook.Plugin.ImageViewer
                 ? $"{Path.GetFileName(path)}"
                 : $"{size.Width}×{size.Height}: {Path.GetFileName(path)}";
 
-            _ip.ImageUriSource = new Uri(path);
+            _ip.ImageUriSource = Helper.FilePathToFileUrl(path);
         }
 
         public void Cleanup()
